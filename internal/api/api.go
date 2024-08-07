@@ -1,28 +1,43 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"sync"
 
 	"github.com/felipecarvalho180/ask-me-golang/internal/store/pgstore"
 	"github.com/go-chi/chi/v5"
+	"github.com/gorilla/websocket"
 )
 
-type apiHandler struct {
-	queries *pgstore.Queries
-	router  *chi.Mux
+type ApiHandler struct {
+	queries     *pgstore.Queries
+	router      *chi.Mux
+	upgrader    websocket.Upgrader
+	subscribers map[string]map[*websocket.Conn]context.CancelFunc
+	mu          *sync.Mutex
 }
 
-func (handler apiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (handler ApiHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	handler.router.ServeHTTP(w, r)
 }
 
 func NewHandler(queries *pgstore.Queries) http.Handler {
-	api := apiHandler{
-		queries: queries,
+	a := ApiHandler{
+		queries:     queries,
+		upgrader:    websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
+		subscribers: make(map[string]map[*websocket.Conn]context.CancelFunc),
+		mu:          &sync.Mutex{},
 	}
 
-	router := chi.NewRouter()
+	r := chi.NewRouter()
+	ConfigureMiddlewares(r)
 
-	api.router = router
-	return api
+	r.Route("/api", func(r chi.Router) {
+		RegisterWebsocketRoutes(&a, r)
+		RegisterApiRestRoutes(&a, r)
+	})
+
+	a.router = r
+	return a
 }
